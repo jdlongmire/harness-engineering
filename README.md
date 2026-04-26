@@ -13,7 +13,7 @@ The core theory is the **4M Model** (Mission, Mind, Morals, Memory), which propo
 | **Morals** | What must the system never do? | Deontic |
 | **Memory** | What does the system retain across turns? | Temporal |
 
-The full 4M reference article is in [`theory/4m-reference-architecture/`](theory/4m-reference-architecture/index.md). The Lakatos framing (hard core, protective belt, heuristics) is in [`PROGRAMME.md`](PROGRAMME.md).
+The full 4M reference article is in [`theory/4m-reference-architecture/`](theory/4m-reference-architecture/index.md), also published at [aithinkr.net](https://aithinkr.net/articles/4m-reference-architecture/). The Lakatos framing (hard core, protective belt, heuristics) is in [`PROGRAMME.md`](PROGRAMME.md).
 
 ## Repository Structure
 
