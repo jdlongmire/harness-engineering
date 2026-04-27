@@ -1,3 +1,9 @@
+> **This repository has been deprecated.** Active development continues at
+> [agent-harness-engineering/harness-engineering](https://github.com/agent-harness-engineering/harness-engineering).
+> This repo is archived and read-only.
+
+---
+
 # Harness Engineering
 
 A research programme ([Lakatos, 1978](https://en.wikipedia.org/wiki/The_Methodology_of_Scientific_Research_Programmes)) investigating principled architectural patterns for LLM harness systems.
