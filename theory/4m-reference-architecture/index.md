@@ -17,7 +17,7 @@ description: "A principled reference architecture organising LLM harness concern
 
 ## Abstract
 
-Large language model applications increasingly depend on the orchestration layer that surrounds the model itself. This article introduces the **4M Model**, a generic reference architecture that decomposes LLM harness engineering into four modules with separated concerns and explicit coupling channels, each grounded in a distinct philosophical domain: **Mission** (telos and mereology), **Mind** (ontic and epistemic grounding, with deductive, inductive, and abductive inference modes unified by a Bayesian belief-revision framework), **Morals** (deontic constraints), and **Memory** (temporal continuity). The architecture specifies a hybrid interaction model combining a layered inference pipeline with explicit cross-cutting channels, and distinguishes the cognitive architecture (4M) from the execution substrate (**Means**) through a separate interface contract. The result is a system whose concerns are independently testable, composable, and portable across model providers and deployment modes. A reference implementation in the nemo-harness project demonstrates each module in a self-hosted deployment context.
+Large language model applications increasingly depend on the orchestration layer that surrounds the model itself. This article introduces the **4M Model**, a generic reference architecture that decomposes LLM harness engineering into four modules with separated concerns and explicit coupling channels, each grounded in a distinct philosophical domain: **Mission** (telos and mereology), **Mind** (ontic and epistemic grounding, with deductive, inductive, and abductive inference modes unified by a Bayesian belief-revision framework), **Morals** (deontic constraints), and **Memory** (temporal continuity). The architecture specifies a hybrid interaction model combining a layered inference pipeline with explicit cross-cutting channels, and distinguishes the cognitive architecture (4M) from the execution substrate (**Means**) through a separate interface contract. The result is a system whose concerns are independently testable, composable, and portable across model providers and deployment modes. Section 6 provides implementation guidance for realising each module in practice.
 
 ## 1. Introduction
 
@@ -97,7 +97,7 @@ Mind
     +-- Posterior  --> Confidence signal, Memory
 ```
 
-A concrete implementation may approximate this framework through calibrated confidence bands, source-weighting rules, retrieval scores, verifier outputs, or explicit probabilistic state. The reference implementation (Section 6) currently approximates this pattern through metacognitive calibration and structured confidence signaling rather than implementing a full Bayesian belief store. The key architectural requirement is that confidence signals be derived from evidence, retrieval, or verification rather than from model self-report alone (which is a learned behaviour, not a reliability indicator).
+A concrete implementation may approximate this framework through calibrated confidence bands, source-weighting rules, retrieval scores, verifier outputs, or explicit probabilistic state. A concrete implementation may approximate this pattern through metacognitive calibration and structured confidence signaling rather than implementing a full Bayesian belief store. The key architectural requirement is that confidence signals be derived from evidence, retrieval, or verification rather than from model self-report alone (which is a learned behaviour, not a reliability indicator).
 
 **Key design properties:**
 
@@ -242,65 +242,79 @@ Each category of state has exactly one authoritative store. Persistent memory li
 
 Every module boundary and cross-cutting channel is an interface that can be tested in isolation. Mission can be tested by verifying that a given intent produces the expected guide fragments and tool subsets. Mind can be tested by evaluating reasoning quality on benchmark prompts. Morals can be tested by submitting known-dangerous inputs and verifying rejection. Memory can be tested by asserting round-trip consistency of stored and retrieved entries. Cross-cutting channels can be tested by simulating their trigger conditions and verifying the expected payload and downstream effect.
 
-## 6. Reference Implementation: nemo-harness
+## 6. Implementation Guidance
 
-The nemo-harness project implements the 4M Model for a self-hosted LLM deployment. The following sections map each module to its concrete realisation, demonstrating that the abstract architecture accommodates the engineering constraints of a real system.
+This section provides guidance for realising each 4M module in a concrete system. The recommendations are mechanism-neutral: they describe what a conforming implementation must achieve, not which libraries or languages to use.
 
-### 6.1 Mission in nemo-harness
+### 6.1 Implementing Mission
 
-**Base mission** is defined in the mode header: a static identity block ("You are Nemo, the ThinxAI assistant") combined with a capabilities declaration and default behavioural tone. Four named modes (default, technical, creative, research) provide variant base missions with distinct temperature and token budget parameters.
+A conforming Mission implementation requires:
 
-**Sub-missions** are driven by a Tier 1 deterministic intent classifier (`tools/context_sensor.py`). The classifier scores incoming messages against keyword sets for six intent categories (coding, document, research, planning, git, conversation) and applies hysteresis requiring two consecutive matching signals before switching the active intent. This design achieves sub-millisecond classification latency at zero inference cost, a critical property for self-hosted deployments where the inference endpoint is a shared resource.
+**Base mission as static configuration.** The system's identity, domain scope, and default behavioural tone should be defined outside the model's reasoning loop, in a configuration file, environment variable, or declarative document that changes only through explicit reconfiguration. The base mission is not a prompt fragment the model edits; it is the stable ground on which sub-missions compose.
 
-Each intent maps to a subset of guide fragments (`INTENT_GUIDES`) and tool definitions (`INTENT_TOOLS`), reducing context noise by presenting only mission-relevant information to the model. The `conversation` intent serves as a fallback that includes all guides and tools.
+**Sub-missions as composable overlays.** Each sub-mission should specify its own guide fragments, tool subsets, and inference parameters (temperature, token budget). Sub-missions activate in response to detected user intent or explicit mode switches. The activation mechanism may be deterministic (keyword scoring, regex), probabilistic (embedding similarity), or model-based (LLM-as-classifier). For latency-sensitive or resource-constrained deployments, deterministic classifiers with hysteresis (requiring consecutive matching signals before switching) achieve sub-millisecond classification at zero inference cost.
 
-### 6.2 Mind in nemo-harness
+**Context scoping.** Each sub-mission should map to a subset of available guides and tools, presenting only mission-relevant information to the model. A fallback sub-mission (e.g., general conversation) includes the full set. This reduces context noise and improves reasoning quality by narrowing the model's attention to the active concern.
 
-Cognitive instruction is distributed across guide fragments selected by Mission. The `behavioral_core` guide encodes metacognitive calibration: distinguish computation from pattern-matching, flag confidence levels, acknowledge knowledge boundaries, prefer accuracy over approval. Mode-specific footers adjust reasoning priorities (technical mode prioritises precision; creative mode encourages varied expression; research mode demands evidence-inference distinction).
+### 6.2 Implementing Mind
 
-The tool-calling loop (`_process_chat_job()`) implements a ReAct-style reasoning cycle with a maximum of ten iterations. The model selects tools, observes results, and decides whether to continue or produce a final response. This iterative process is the runtime expression of Mind: the model is reasoning about how to accomplish the Mission using available tools, subject to Morals constraints on those tools.
+A conforming Mind implementation requires:
 
-### 6.3 Morals in nemo-harness
+**Cognitive instruction separated from behavioural rules.** Guide fragments that shape how the model reasons (metacognitive calibration, confidence signaling, reasoning strategies) belong to Mind. Guide fragments that constrain what the model may do (output restrictions, refusal conditions) belong to Morals. Mixing them in a single undifferentiated system prompt is the most common 4M boundary violation.
 
-Constraint enforcement operates through four independent layers, implementing defence in depth:
+**Structured reasoning loops.** Whether using ReAct-style tool calling, chain-of-thought prompting, or multi-step planning, the reasoning process should be explicit and bounded. Set a maximum iteration count for tool-calling loops. Log each reasoning step. The model should be able to observe its own tool results and decide whether to continue or produce a final response.
 
-1. **Path sandboxing** (`tools/sandbox.py`): All file operations are validated against an allowlist of directories. Paths outside the sandbox raise `PermissionError` before any file system access occurs.
+**Metacognitive calibration.** The system prompt should instruct the model to distinguish computation from pattern-matching, flag confidence levels, and acknowledge knowledge boundaries. These are cognitive instructions, not moral constraints: they improve reasoning quality rather than preventing harm.
 
-2. **Dangerous command blocking** (`tools/sandbox.py`): Shell commands are matched against a pattern list of destructive operations (`rm -rf /`, `mkfs`, `dd if=`, fork bombs, shutdown sequences). Matches are rejected before execution.
+**Mode-sensitive reasoning.** Different sub-missions may require different reasoning priorities. A technical sub-mission prioritises precision and verification; a creative sub-mission encourages varied expression; a research sub-mission demands evidence-inference distinction. Mind configuration should vary with the active Mission.
 
-3. **Network access control** (`server.py`): Web fetch and search operations resolve target hostnames and reject private, loopback, reserved, and link-local IP addresses, preventing server-side request forgery.
+### 6.3 Implementing Morals
 
-4. **Tool-call validation** (`tools/registry.py`): Required parameters are validated before tool execution; malformed calls return structured error responses rather than propagating to tool handlers.
+A conforming Morals implementation requires **defence in depth**: multiple independent enforcement layers, each sufficient to prevent a class of violation even if other layers fail. Typical layers include:
 
-The system prompt contributes a fifth, non-executable layer: behavioural guidance that shapes the model's intent (truth over satisfaction, source citation requirements, confidence flagging). This layer belongs to Mind in the 4M taxonomy but complements the executable Morals layers by reducing the frequency of constraint violations that the runtime gates must catch.
+1. **Path sandboxing**: All file operations validated against an allowlist of directories. Paths outside the sandbox are rejected before any file system access occurs.
 
-### 6.4 Memory in nemo-harness
+2. **Dangerous command blocking**: Shell commands matched against a pattern list of destructive operations (recursive deletion, disk formatting, fork bombs, shutdown sequences). Matches are rejected before execution.
 
-**Session memory** implements a three-zone token budget model:
+3. **Network access control**: Outbound requests resolve target hostnames and reject private, loopback, reserved, and link-local IP addresses, preventing server-side request forgery.
+
+4. **Tool-call validation**: Required parameters are validated before tool execution; malformed calls return structured error responses rather than propagating to tool handlers.
+
+5. **Output validation**: Post-generation checks on model output for format compliance, content policy, and factual consistency against known sources.
+
+The system prompt may contribute an additional non-executable layer: behavioural guidance that shapes the model's intent. This layer belongs to Mind in the 4M taxonomy but complements the executable Morals layers by reducing the frequency of constraint violations that the runtime gates must catch. The critical principle is that safety-critical constraints must not depend solely on prompt-level guidance.
+
+### 6.4 Implementing Memory
+
+A conforming Memory implementation requires:
+
+**Session memory with token-aware management.** A practical approach is a three-zone token budget:
 
 | Zone | Content | Eviction Policy |
 |------|---------|-----------------|
 | Pinned | System prompt, tool definitions, persistent memory block | Never evicted |
 | Summary | Running summary of evicted turns | Regenerated on each eviction cycle |
-| Verbatim | Recent messages with masked observations | Oldest turns evicted when budget exceeded |
+| Verbatim | Recent messages | Oldest turns evicted when budget exceeded |
 
-Observation masking (`mask_observations()`) replaces tool result content in older messages with a truncation marker while preserving the message structure. This can significantly reduce token load in long-running agent sessions by preserving conversational structure while compressing tool-result payloads, without losing the scaffolding that helps the model maintain coherence.
+**Observation masking** can significantly reduce token load in tool-heavy sessions by replacing tool result content in older messages with a truncation marker while preserving conversational structure. This compresses payloads without losing the scaffolding that helps the model maintain coherence.
 
-Running summaries are generated via LLM-based summarisation of evicted turns (with a heuristic fallback for resilience), producing a cumulative summary that grows as the conversation extends beyond the verbatim window.
+**Running summaries** of evicted turns (generated via LLM summarisation with a heuristic fallback for resilience) provide cumulative context that grows as the conversation extends beyond the verbatim window.
 
-**Persistent memory** uses SQLite (WAL mode) as the single source of truth. Entries are typed (user, feedback, project, reference) with type-specific TTL policies (project entries expire after 90 days; others persist indefinitely). The `build_context_block()` function assembles active entries into a `<memory>` block injected into the system prompt, subject to a configurable token budget.
+**Persistent memory with a single authoritative store.** Entries should be typed (user facts, behavioural feedback, project context, reference pointers) with type-specific TTL policies. A context-building step assembles active entries into a memory block injected into the system prompt, subject to a configurable token budget.
 
-A flat-file projection (`memory.md`) is regenerated after every write operation, providing a human-readable view of the persistent store. This file is explicitly read-only; the system prompt instructs the model to use structured action tags (`[ACTION:remember\lvert...\rvert]`) for memory writes, ensuring all mutations flow through the SQLite store.
+Any external representation (flat files, API responses, dashboard views) should be a read-only projection of the authoritative store, regenerated after writes. All mutations must flow through the primary store, ensuring consistency.
 
-### 6.5 Cross-Cutting Channels in nemo-harness
+### 6.5 Implementing Cross-Cutting Channels
 
-**Memory to Mind**: Persistent memory is injected into the system prompt at the start of each inference call (`get_effective_system_prompt()`). Mid-conversation recall is supported through the `/recall` command and `semantic_search` tool, which query the SQLite store and inject results into the conversation as tool results.
+Each of the four channels (Section 3.2) requires a concrete realisation:
 
-**Mind to Memory**: The model writes to persistent memory via action tags processed by `process_action_tags()`. Running summaries are generated by the Mind module (LLM inference) and stored by the Memory module as session state.
+**Memory to Mind (mid-reasoning recall).** At minimum, persistent memory is injected into the system prompt at the start of each inference call. Richer implementations support mid-conversation recall through search tools or retrieval commands that query the persistent store and inject results as tool observations.
 
-**Mission to Morals**: Each intent activates its associated tool subset (`INTENT_TOOLS`). Tools excluded from the active subset are not presented to the model, preventing tool calls that the Morals layer would reject. The coding intent activates file-system tools (and their associated sandbox rules); the research intent activates web tools (and their associated network access controls).
+**Mind to Memory (persistence decisions).** The model signals what to persist through structured mechanisms: action tags, tool calls, or designated output formats. The Memory module processes these signals and writes to the authoritative store. Running summaries generated by the Mind module during reasoning are stored by the Memory module as session state.
 
-**Morals to Mission**: The circuit breaker (`_check_circuit_breaker()`) approximates this channel at the infrastructure boundary. After five consecutive inference failures, the system suspends processing for 60 seconds rather than continuing to issue failing requests. Strictly speaking, this is Means-level resilience with Morals-to-Mission implications; a fuller implementation would adjust the active sub-mission or tool subset in response to repeated constraint violations.
+**Mission to Morals (constraint activation).** Each sub-mission activates its associated constraint profile. A coding sub-mission activates file-system sandbox rules; a research sub-mission activates network access controls and source-citation requirements. Tools excluded from the active sub-mission's subset should not be presented to the model, preventing tool calls that the Morals layer would reject.
+
+**Morals to Mission (constraint-driven adjustment).** When the system detects repeated constraint violations or consecutive failures, it should signal Mission to adjust. This may manifest as a circuit breaker (suspending processing after repeated failures), sub-mission reconfiguration, or tool subset adjustment. The goal is to prevent the system from repeatedly attempting actions it will never be allowed to complete.
 
 ## 7. Comparison with Existing Frameworks
 
@@ -344,7 +358,7 @@ The philosophical grounding is not incidental. It gives each module a non-overla
 
 The model is deliberately generic. It does not prescribe programming languages, databases, model providers, or ethical frameworks. It does prescribe that the four concerns be separated, that their boundaries be testable, that constraint enforcement be executable rather than merely advisory, that state management follow single-source-of-truth principles, and that the Morals module be grounded in an explicit ethical framework rather than an ad hoc rule list. These prescriptions are informed by the engineering reality that LLM harnesses are software systems, and software systems benefit from separation of concerns.
 
-The nemo-harness reference implementation demonstrates that these prescriptions are practical. A self-hosted deployment with deterministic intent classification, four-layer constraint enforcement, token-aware context management, and SQLite-backed persistent memory implements all four modules and all four cross-cutting channels within a single-server architecture. The 4M Model did not require exotic infrastructure; it required clarity about which code serves which concern.
+These prescriptions are practical. A single-server deployment with deterministic intent classification, multi-layer constraint enforcement, token-aware context management, and database-backed persistent memory can implement all four modules and all four cross-cutting channels without exotic infrastructure. The 4M Model does not require a particular tech stack; it requires clarity about which code serves which concern.
 
 ## Appendix: 4M Conformance Checklist
 
